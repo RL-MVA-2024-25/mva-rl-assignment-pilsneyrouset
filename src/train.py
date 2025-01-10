@@ -65,11 +65,11 @@ class ProjectAgent:
             self.Qfunction = load("src/random_forest_model.pkl")
         elif self.name == 'DQN':
             device = torch.device('cpu')
-            self.model.load_state_dict(torch.load('/home/onyxia/work/config4.pt', weights_only=True))
+            self.model.load_state_dict(torch.load('src/config4.pt', weights_only=True))
             self.model.eval()
         elif self.name == 'MLP':
             self.model = MLP(input_dim=self.env.observation_space.shape[0], hidden_dim=512, output_dim=self.env.action_space.n, depth=5, activation=torch.nn.SiLU(), normalization='None')
 
-            self.model.load_state_dict(torch.load("/home/onyxia/work/mva-rl-assignment-pilsneyrouset/src/config4.pt", weights_only=True))
+            self.model.load_state_dict(torch.load("src/config4.pt", weights_only=True))
 
             self.model.eval()
