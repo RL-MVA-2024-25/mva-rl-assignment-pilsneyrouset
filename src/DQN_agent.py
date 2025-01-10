@@ -76,8 +76,6 @@ class DQN_AGENT():
     def train(self, max_episode=200):
         episode_return = []
         episode = 0
-        test_episode = 100
-        best_score = 0
         episode_cum_reward = 0
         state, _ = self.env.reset()
         epsilon = self.epsilon_max
@@ -96,7 +94,7 @@ class DQN_AGENT():
             self.memory.append(state, action, reward, next_state, done)
             episode_cum_reward += reward
             # train
-            for _ in range(self.nb_gradient_steps): ### Number of gradient steps after each iteration : try to tune this parameter ...
+            for _ in range(self.nb_gradient_steps): 
                 self.gradient_step()
             # update target network if needed
             if self.update_target_strategy == 'replace':
@@ -113,17 +111,9 @@ class DQN_AGENT():
             step += 1
             if done or trunc:
                 episode += 1
-                if episode > test_episode:
-                    test_score = evaluate_HIV(agent=self, nb_episode=1)
-                else:
-                    test_score = 0
-                if test_score > best_score:
-                    best_score = test_score
-                    self.best_model = deepcopy(self.model).to(self.device)
-
-                print("Episode ", '{:3d}'.format(episode), 
-                      ", epsilon ", '{:6.2f}'.format(epsilon), 
-                      ", batch size ", '{:5d}'.format(len(self.memory)), 
+                print("Episode ", '{:3d}'.format(episode),
+                      ", epsilon ", '{:6.2f}'.format(epsilon),
+                      ", batch size ", '{:5d}'.format(len(self.memory)),
                       ", episode return ", '{:4.1f}'.format(episode_cum_reward),
                       sep='')
                 state, _ = self.env.reset()
@@ -131,8 +121,8 @@ class DQN_AGENT():
                 episode_cum_reward = 0
             else:
                 state = next_state
-        self.model.load_state_dict(self.best_model.state_dict())
-        self.save("/home/onyxia/work/assignment-pilsneyrouset/src/config1_DQN.pt")
+        # self.model.load_state_dict(self.best_model.state_dict())
+        self.save("config1_DQN.pt")
         return episode_return
     
     def greedy_action(self, state):

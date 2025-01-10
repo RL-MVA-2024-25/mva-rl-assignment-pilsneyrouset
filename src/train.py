@@ -8,13 +8,14 @@ import os
 from joblib import dump, load
 from DQN_agent import ReplayBuffer, DQN_AGENT
 from DQNNetwork import DQNNetwork
+from DQN_Augustin import MLP
 
 env = TimeLimit(env=HIVPatient(domain_randomization=False),
                 max_episode_steps=200)  
 
 
 class ProjectAgent:
-    def __init__(self, name='RF_FQI'):
+    def __init__(self, name='MLP'):
         self.env = TimeLimit(
                             env=HIVPatient(domain_randomization=False),
                             max_episode_steps=200
@@ -42,6 +43,11 @@ class ProjectAgent:
             with torch.no_grad():
                 Q = self.model(torch.Tensor(observation).unsqueeze(0).to(device))
             return torch.argmax(Q).item()
+        elif self.name == 'MLP':
+            device = "cuda" if next(self.model.parameters()).is_cuda else "cpu"
+            with torch.no_grad():
+                Q = self.model(torch.Tensor(observation).unsqueeze(0).to(device))
+            return torch.argmax(Q).item()
         else:
             raise ValueError("Unknown model")
 
@@ -59,6 +65,11 @@ class ProjectAgent:
             self.Qfunction = load("src/random_forest_model.pkl")
         elif self.name == 'DQN':
             device = torch.device('cpu')
-            self.moagentdel.load_state_dict(torch.load('src/config1_DQN.pt', weights_only=True))
+            self.model.load_state_dict(torch.load('/home/onyxia/work/config4.pt', weights_only=True))
             self.model.eval()
+        elif self.name == 'MLP':
+            self.model = MLP(input_dim=self.env.observation_space.shape[0], hidden_dim=512, output_dim=self.env.action_space.n, depth=5, activation=torch.nn.SiLU(), normalization='None')
 
+            self.model.load_state_dict(torch.load("/home/onyxia/work/mva-rl-assignment-pilsneyrouset/config4.pt"))
+
+            self.model.eval()
