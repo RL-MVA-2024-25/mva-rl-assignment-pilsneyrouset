@@ -4,12 +4,12 @@ import torch
 from copy import deepcopy
 import random 
 from DQNNetwork import DQNNetwork
-
+import torch.nn as nn
+import torch.nn.utils as utils
 from gymnasium.wrappers import TimeLimit
+from torch.distributions.categorical import Categorical
 from env_hiv import HIVPatient
 from evaluate import evaluate_HIV   
-
-# Have a look at : https://arxiv.org/abs/1312.5602 
 
 
 class ReplayBuffer:
@@ -38,11 +38,15 @@ class DQN_AGENT():
         self.env = TimeLimit(
                             env=HIVPatient(domain_randomization=False),
                             max_episode_steps=200
-                            )  
+                            )
+        self.device = "cpu"
+        self.nb_actions = self.env.action_space.n
         self.state_dim = self.env.observation_space.shape[0]
-        self.n_action = self.env.action_space.n 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.nb_actions = int(self.env.action_space.n)
+        self.model = torch.nn.Sequential(nn.Linear(self.state_dim, 256),
+                          nn.ReLU(),
+                          nn.Linear(256, 256),
+                          nn.ReLU(), 
+                          nn.Linear(256, self.nb_actions)).to(self.device)
         self.gamma = config['gamma'] if 'gamma' in config.keys() else 0.95
         self.batch_size = config['batch_size'] if 'batch_size' in config.keys() else 100
         buffer_size = config['buffer_size'] if 'buffer_size' in config.keys() else int(1e5)
@@ -52,7 +56,6 @@ class DQN_AGENT():
         self.epsilon_stop = config['epsilon_decay_period'] if 'epsilon_decay_period' in config.keys() else 1000
         self.epsilon_delay = config['epsilon_delay_decay'] if 'epsilon_delay_decay' in config.keys() else 20
         self.epsilon_step = (self.epsilon_max-self.epsilon_min)/self.epsilon_stop
-        self.model = DQNNetwork(self.state_dim, config['nb_neurons'], self.nb_actions).to(self.device) 
         self.target_model = deepcopy(self.model).to(self.device)
         self.criterion = config['criterion'] if 'criterion' in config.keys() else torch.nn.MSELoss()
         lr = config['learning_rate'] if 'learning_rate' in config.keys() else 0.001
@@ -61,22 +64,25 @@ class DQN_AGENT():
         self.update_target_strategy = config['update_target_strategy'] if 'update_target_strategy' in config.keys() else 'replace'
         self.update_target_freq = config['update_target_freq'] if 'update_target_freq' in config.keys() else 20
         self.update_target_tau = config['update_target_tau'] if 'update_target_tau' in config.keys() else 0.005
-
+    
     def gradient_step(self):
         if len(self.memory) > self.batch_size:
-            X, A, R, Y, D = self.memory.sample(self.batch_size)    #  X = states; A = actions  ; R = rewards; Y = next states; D = dones
-            QYmax = self.target_model(Y).max(1)[0].detach()      # predict the Q-value of the next state for every a' (actions) (wit the target network)
-            update = torch.addcmul(R, 1-D, QYmax, value=self.gamma)    # update = R + gamma * QYmax (if not done)
-            QXA = self.model(X).gather(1, A.to(torch.long).unsqueeze(1))   # predict the Q-value of the current state for the action taken
+            X, A, R, Y, D = self.memory.sample(self.batch_size)
+            QYmax = self.target_model(Y).max(1)[0].detach()
+            update = torch.addcmul(R, 1-D, QYmax, value=self.gamma)
+            QXA = self.model(X).gather(1, A.to(torch.long).unsqueeze(1))
             loss = self.criterion(QXA, update.unsqueeze(1))
             self.optimizer.zero_grad()
             loss.backward()
-            self.optimizer.step() 
+            utils.clip_grad_norm_(self.model.parameters(), 1)
+            self.optimizer.step()
     
-    def train(self, max_episode=200):
+    def train(self, max_episode=150):
         episode_return = []
         episode = 0
         episode_cum_reward = 0
+        test_episode = 0
+        best_score = 0
         state, _ = self.env.reset()
         epsilon = self.epsilon_max
         step = 0
@@ -98,7 +104,7 @@ class DQN_AGENT():
                 self.gradient_step()
             # update target network if needed
             if self.update_target_strategy == 'replace':
-                if step % self.update_target_freq == 0: 
+                if step % self.update_target_freq == 0:
                     self.target_model.load_state_dict(self.model.state_dict())
             if self.update_target_strategy == 'ema':
                 target_state_dict = self.target_model.state_dict()
@@ -111,6 +117,13 @@ class DQN_AGENT():
             step += 1
             if done or trunc:
                 episode += 1
+                if episode > test_episode:
+                    test_score = evaluate_HIV(agent=self, nb_episode=1)
+                else:
+                    test_score = 0
+                if test_score > best_score:
+                    best_score = test_score
+                    self.best_model = deepcopy(self.model).to(self.device)
                 print("Episode ", '{:3d}'.format(episode),
                       ", epsilon ", '{:6.2f}'.format(epsilon),
                       ", batch size ", '{:5d}'.format(len(self.memory)),
@@ -121,51 +134,34 @@ class DQN_AGENT():
                 episode_cum_reward = 0
             else:
                 state = next_state
-        # self.model.load_state_dict(self.best_model.state_dict())
-        self.save("config1_DQN.pt")
+        self.model.load_state_dict(self.best_model.state_dict())
+        torch.save(self.model.state_dict(), "src/dqn_model_weights.pt")
         return episode_return
-    
+
     def greedy_action(self, state):
         with torch.no_grad():
             Q = self.model(torch.Tensor(state).unsqueeze(0).to(self.device))
-        return torch.argmax(Q).item()
-    
-    def save(self, path):
-        torch.save(self.model.state_dict(), path)
-
-    def load(self, path):
-        device = torch.device('cpu')
-        self.model = DQNNetwork(self.state_dim, config['nb_neurons'], self.nb_actions).to(device)
-        self.model.load_state_dict(torch.load(path, map_location=device))
-        self.model.eval()
-
-    def act(self, observation, use_random=False):
-        if use_random:
-            return self.env.action_space.sample()
-        else:
-            with torch.no_grad():
-                Q = self.model(torch.Tensor(observation).unsqueeze(0).to(self.device))
             return torch.argmax(Q).item()
+    
+    def act(self, observation, use_random=False):
+        with torch.no_grad():
+            Q = self.model(torch.Tensor(observation).unsqueeze(0).to(self.device))
+            return torch.argmax(Q).item()
+            
 
+config = {'learning_rate': 0.001,
+          'gamma': 0.98,
+          'buffer_size': 100000,
+          'epsilon_min': 0.02,
+          'epsilon_max': 1.,
+          'epsilon_decay_period': 15000,
+          'epsilon_delay_decay': 100,
+          'batch_size': 600,
+          'gradient_steps': 2,
+          'update_target_strategy': 'replace',
+          'update_target_freq': 400,
+          'update_target_tau': 0.005,
+          'criterion': torch.nn.SmoothL1Loss()}
 
-config = {
-        'learning_rate': 0.001,
-        'gamma': 0.99,
-        'buffer_size': 1000000,
-        'epsilon_min': 0.01,
-        'epsilon_max': 1.,
-        'epsilon_decay_period': 1000,
-        'epsilon_delay_decay': 20,
-        
-        'batch_size': 10,
-        'gradient_steps': 3,
-        'update_target_strategy': 'replace',
-        'update_target_freq': 50,
-        'update_target_tau': 0.005,
-        'criterion': torch.nn.SmoothL1Loss(),
-        'monitoring_nb_trials': 50,
-        'nb_neurons': 256
-        }
-
-# agent = DQN_AGENT(config)
-# agent.train()
+agent = DQN_AGENT(config=config)
+episode_return = agent.train()
