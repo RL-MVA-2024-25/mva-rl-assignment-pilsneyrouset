@@ -163,5 +163,5 @@ config = {'learning_rate': 0.001,
           'update_target_tau': 0.005,
           'criterion': torch.nn.SmoothL1Loss()}
 
-agent = DQN_AGENT(config=config)
-episode_return = agent.train()
+# agent = DQN_AGENT(config=config)
+# episode_return = agent.train()

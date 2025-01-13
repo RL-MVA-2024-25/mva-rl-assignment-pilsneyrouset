@@ -8,68 +8,40 @@ import os
 from joblib import dump, load
 from DQN_agent import ReplayBuffer, DQN_AGENT
 from DQNNetwork import DQNNetwork
-from DQN_Augustin import MLP
 
 env = TimeLimit(env=HIVPatient(domain_randomization=False),
-                max_episode_steps=200)  
+                max_episode_steps=200)
+
+class DQN_model(torch.nn.Module):
+    def __init__(self, input_dim=6, hidden_dim=256, output_dim=4, depth=6):
+        super(DQN_model, self).__init__()
+        self.input_layer = torch.nn.Linear(input_dim, hidden_dim)
+        self.hidden_layers = torch.nn.ModuleList([torch.nn.Linear(hidden_dim, hidden_dim) for _ in range(depth - 1)])
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
+        self.activation = torch.nn.ReLU()
+        
+    def forward(self, x):
+        x = self.activation(self.input_layer(x))
+        for layer in self.hidden_layers:
+            x = self.activation(layer(x))
+        return self.output_layer(x)
 
 
 class ProjectAgent:
-    def __init__(self, name='MLP'):
-        self.env = TimeLimit(
-                            env=HIVPatient(domain_randomization=False),
-                            max_episode_steps=200
-                            )  
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.name = name
-        self.original_env = self.env.env
-        self.nb_actions = int(self.original_env.action_space.n)
-        self.nb_neurons = 256
-        self.model = DQNNetwork(state_dim=self.env.observation_space.shape[0], nb_neurons=self.nb_neurons, n_action=self.nb_actions).to(self.device)
+    def __init__(self):
+        self.load()
+
+    def act(self, observation):
+        return self.greedy(observation)
     
-    def act(self, observation, use_random=False):
-        if use_random:
-            return self.env.action_space.sample()
-        elif self.name == 'RF_FQI':
-            self.load()
-            Qsa = []
-            for a in range(self.nb_actions):
-                sa = np.append(observation, a).reshape(1, -1)
-                Qsa.append(self.Qfunction.predict(sa))
-            return np.argmax(Qsa)
-
-        elif self.name == 'DQN':
-            device = "cuda" if next(self.model.parameters()).is_cuda else "cpu"
-            with torch.no_grad():
-                Q = self.model(torch.Tensor(observation).unsqueeze(0).to(device))
+    def greedy(self, state):
+        device = "cuda" if next(self.model.parameters()).is_cuda else "cpu"
+        with torch.no_grad():
+            Q = self.model(torch.Tensor(state).unsqueeze(0).to(device))
             return torch.argmax(Q).item()
-        elif self.name == 'MLP':
-            device = "cuda" if next(self.model.parameters()).is_cuda else "cpu"
-            with torch.no_grad():
-                Q = self.model(torch.Tensor(observation).unsqueeze(0).to(device))
-            return torch.argmax(Q).item()
-        else:
-            raise ValueError("Unknown model")
-
-    def save(self):
-        if self.name == 'RF_FQI':
-            filename = 'models/RF_FQI/Qfct'
-            model = {'Qfunction': self.agent.rf_model}
-            dump(model, filename, compress=9)
-        elif self.name == 'DQN':
-            filename = "models/DQN/config1.pt"
-            torch.save(self.model.state_dict(), filename)
 
     def load(self):
-        if self.name == 'RF_FQI':
-            self.Qfunction = load("src/random_forest_model.pkl")
-        elif self.name == 'DQN':
-            device = torch.device('cpu')
-            self.model.load_state_dict(torch.load('src/config4.pt', weights_only=True))
-            self.model.eval()
-        elif self.name == 'MLP':
-            self.model = MLP(input_dim=self.env.observation_space.shape[0], hidden_dim=512, output_dim=self.env.action_space.n, depth=5, activation=torch.nn.SiLU(), normalization='None')
-
-            self.model.load_state_dict(torch.load("src/config4.pt", weights_only=True))
-
-            self.model.eval()
+        self.model = DQN_model()
+        model_saved = torch.load("trained_dqn_weights.pt")
+        self.model.load_state_dict(model_saved['model_state_dict'])
+        self.model.eval()
